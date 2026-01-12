@@ -1,0 +1,144 @@
+<?php
+/* ================= VERCEL HEADERS ================= */
+header("Content-Type: application/json");
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: GET, POST");
+
+/* ================= CONFIG ================= */
+
+$AES_KEY = $_ENV['AES_KEY'] ?? "RTO@N@1V@$U2024#";
+$AES_ALGO = "AES-128-ECB";
+$CUSTOM_RESPONSE_MESSAGE = "Fetched [ SENPAI ]";
+
+$CARS24_BASE = "https://seller-lead.cars24.team";
+$CARS24_AUTH = $_ENV['CARS24_AUTH'] ?? "Basic ";
+$CARS24_PVT  = $_ENV['CARS24_PVT'] ?? "Bearer ";
+$CARS24_PHONE = $_ENV['CARS24_PHONE'] ?? "";
+$CARS24_USER  = $_ENV['CARS24_USER'] ?? "";
+
+/* ================= UTILS ================= */
+
+function encryptData($data, $key) {
+    return base64_encode(openssl_encrypt($data, "AES-128-ECB", $key, OPENSSL_RAW_DATA));
+}
+
+function decryptData($data, $key) {
+    return openssl_decrypt(base64_decode($data), "AES-128-ECB", $key, OPENSSL_RAW_DATA);
+}
+
+function curlJSON($url, $method="GET", $headers=[], $body=null) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_TIMEOUT => 10
+    ]);
+    $res = curl_exec($ch);
+    curl_close($ch);
+    return json_decode($res, true);
+}
+
+/* ================= UNMASKED ================= */
+
+function getUnmaskedData($rc) {
+    $url = "http://147.93.27.177:3000/rc?search=" . urlencode($rc);
+    $res = curlJSON($url);
+    if (!empty($res['data'])) {
+        return [
+            "owner_name" => $res['data']['registration_details']['owner_name'] ?? null,
+            "father_name" => $res['data']['ownership_details']['father_name'] ?? null,
+            "vehicle_age" => $res['data']['important_dates']['vehicle_age'] ?? null
+        ];
+    }
+    return null;
+}
+
+/* ================= CHALLAN ================= */
+
+function getChallanInfo($rc) {
+    global $CARS24_BASE,$CARS24_AUTH,$CARS24_PVT,$CARS24_PHONE,$CARS24_USER;
+
+    $lead = curlJSON(
+        "$CARS24_BASE/prospect/lead",
+        "POST",
+        [
+            "Content-Type: application/json",
+            "authorization: $CARS24_AUTH",
+            "pvtauthorization: $CARS24_PVT"
+        ],
+        json_encode([
+            "phone"=>$CARS24_PHONE,
+            "vehicle_reg_no"=>$rc,
+            "user_id"=>$CARS24_USER,
+            "whatsapp_consent"=>true,
+            "type"=>"challan",
+            "device_category"=>"Mweb"
+        ])
+    );
+
+    if (empty($lead['success'])) return null;
+
+    $token = $lead['detail']['token'];
+
+    return curlJSON(
+        "$CARS24_BASE/challan/list/$token",
+        "GET",
+        [
+            "authorization: $CARS24_AUTH",
+            "pvtauthorization: $CARS24_PVT"
+        ]
+    );
+}
+
+/* ================= MERGE ================= */
+
+function mergeRc($rcData,$unmasked){
+    if(!$unmasked || empty($rcData['data'][0])) return $rcData;
+    $r = &$rcData['data'][0];
+    if(!empty($unmasked['owner_name'])) $r['owner_name']=$unmasked['owner_name'];
+    if(!empty($unmasked['father_name'])) $r['father_name']=$unmasked['father_name'];
+    if(!empty($unmasked['vehicle_age'])) $r['vehicle_age']=$unmasked['vehicle_age'];
+    $rcData['response_message']="Fetched [ SENPAI ]";
+    return $rcData;
+}
+
+/* ================= MAIN ================= */
+
+$rc = $_GET['query'] ?? null;
+if(!$rc){
+    echo json_encode(["status"=>false,"message"=>"Missing ?query=RCNUMBER"]);
+    exit;
+}
+
+$encryptedRc = encryptData($rc,$AES_KEY);
+
+$formData = http_build_query([
+    "4svShi1T5ftaZPNNHhJzig===" => $encryptedRc
+]);
+
+$apiResponse = curlJSON(
+    "https://rcdetailsapi.vehicleinfo.app/api/vasu_rc_doc_details",
+    "POST",
+    [
+        "User-Agent: okhttp/5.0.0-alpha.11",
+        "device_type: android"
+    ],
+    $formData
+);
+
+$rcData = is_string($apiResponse)
+    ? json_decode(decryptData($apiResponse,$AES_KEY),true)
+    : $apiResponse;
+
+$unmasked = getUnmaskedData($rc);
+$challan  = getChallanInfo($rc);
+
+if(is_array($rcData)) $rcData = mergeRc($rcData,$unmasked);
+
+echo json_encode([
+    "query"=>$rc,
+    "rc_chudai"=>$rcData,
+    "challan_info"=>$challan
+], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
